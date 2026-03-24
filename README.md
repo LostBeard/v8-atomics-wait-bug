@@ -82,9 +82,17 @@ Three tests isolate the bug precisely:
 | 2. Bug trigger (3 workers) | 3 | wait/notify | 39,368 / 375,000 | **10.5%** | **FAIL** |
 | 3. Workaround (spin) | 3 | spin (Atomics.load) | 0 / 288,000 | 0% | **PASS** |
 
+### Firefox 148 (SpiderMonkey) — escalating 1K to 100K
+
+| Test | Workers | Barrier | Stale Reads | Error Rate | Result |
+|------|---------|---------|-------------|------------|--------|
+| 1. Control (2 workers) | 2 | wait/notify | 0 / 200,000 | 0% | **PASS** |
+| 2. Bug trigger (3 workers) | 3 | wait/notify | 1,897 / 3,000 | **63.2%** | **FAIL** |
+| 3. Workaround (spin) | 3 | spin (Atomics.load) | 0 / 9,000 | 0% | **PASS** |
+
 - **Test 1** proves the barrier algorithm is correct with 2 workers.
-- **Test 2** proves it breaks with 3 workers and `Atomics.wait`. The error rate varies between V8 versions (66% on V8 12.4 vs 10.5% on V8 ~14.6), but any stale read is a correctness violation.
-- **Test 3** proves the spin workaround fixes it on all tested versions.
+- **Test 2** proves it breaks with 3 workers and `Atomics.wait` on **all tested engines** (V8, SpiderMonkey). Firefox fails at just 1,000 iterations with 63.2% — nearly identical to Node.js V8's ~66%.
+- **Test 3** proves the spin workaround fixes it on all tested engines.
 
 ## Spec References
 
@@ -102,14 +110,19 @@ Three tests isolate the bug precisely:
 
 ## Affected Environments
 
-| Environment | V8 Version | Error Rate | Status |
-|-------------|-----------|-----------|--------|
+| Environment | Engine | Error Rate | Status |
+|-------------|--------|-----------|--------|
 | Node.js 22.14.0 | V8 12.4.254.21 | **~66%** stale reads | **Affected** — highly reproducible |
 | Chrome 146 | V8 ~14.6.x | **10.5%** stale reads | **Affected** — confirmed with escalating test |
-| Firefox (SpiderMonkey) | N/A | — | Not tested |
+| **Firefox 148** | **SpiderMonkey** | **63.2%** stale reads | **Affected** — fails at 1K iterations |
 | Safari (JavaScriptCore) | N/A | — | Not tested |
 
-**Important:** Node.js and Chrome ship **different V8 versions**. Both exhibit the bug, but at different rates (66% vs 10.5%), suggesting the issue has been partially mitigated in newer V8 but not fully fixed. The intermittent nature in Chrome makes this bug particularly dangerous — it surfaces under sustained high-volume barrier synchronization, exactly the scenario used by real applications (GPU kernel dispatch, parallel algorithms, etc.).
+**CRITICAL UPDATE:** This is **NOT engine-specific**. Firefox 148 (SpiderMonkey) exhibits **63.2% stale reads at just 1,000 iterations** — nearly identical to Node.js V8's ~66%. Chrome V8 ~14.6 shows a lower rate (10.5%) but all three engines fail. This points to either:
+- A **spec gap** in the ECMAScript/WebAssembly memory model (the "not-equal" path genuinely lacks ordering guarantees)
+- A **platform-level issue** (Windows `WaitOnAddress` / futex implementation)
+- A **hardware-level issue** (AMD Ryzen 5 7500F TSO behavior)
+
+The fact that two completely independent JavaScript engines (V8 and SpiderMonkey) exhibit the same bug at nearly the same rate strongly suggests this is a **spec-level issue**, not an engine implementation bug.
 
 **System tested on:** Windows 11, AMD Ryzen 5 7500F (6 cores / 12 threads)
 
