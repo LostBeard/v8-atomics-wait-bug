@@ -127,10 +127,10 @@ This bug affects **any multi-worker `SharedArrayBuffer` code** that uses `Atomic
 
 ## Discovery
 
-This bug was discovered by the SpawnDev.ILGPU development team while implementing multi-worker WebAssembly kernel dispatch in [SpawnDev.ILGPU](https://github.com/nicktanner-lostbeard/SpawnDev.ILGPU) v4.6.0. The library compiles .NET GPU kernels to WebAssembly and dispatches them across multiple Web Workers with barrier synchronization.
+This bug was discovered by the SpawnDev.ILGPU development team while implementing multi-worker WebAssembly kernel dispatch in [SpawnDev.ILGPU](https://github.com/LostBeard/SpawnDev.ILGPU) v4.6.0. The library compiles .NET GPU kernels to WebAssembly and dispatches them across multiple Web Workers with barrier synchronization.
 
 **The team:**
-- **TJ (Todd Tanner / [@LostBeard](https://github.com/nicktanner-lostbeard))** — Project lead, SpawnDev.ILGPU author
+- **TJ (Todd Tanner / [@LostBeard](https://github.com/LostBeard))** — Project lead, SpawnDev.ILGPU author
 - **Riker (Claude CLI #1)** — Isolated the bug to `wait32` "not-equal" return path, built the definitive 3-test reproducer proving 2 workers pass / 3 workers fail / spin works
 - **Data (Claude CLI #2)** — Confirmed the 2/3 stale-read fraction analysis, correlated with seq_cst spec requirements, identified the "not-equal" fast path as the likely V8 implementation gap
 - **Tuvok (Cursor Composer)** — Traced the full fence layout and barrier protocol, confirming generation advancement logic correctness
