@@ -4,6 +4,12 @@
 
 This repository contains a minimal, runnable demonstration of a memory ordering bug in V8 (Chrome/Node.js) where the `Atomics.wait` / `memory.atomic.wait32` "not-equal" fast path fails to establish happens-before relationships, causing stale reads of shared memory.
 
+## Live Demo
+
+**https://lostbeard.github.io/v8-atomics-wait-bug/**
+
+Run the tests directly in your browser — no install required. The demo auto-escalates iterations until the bug is detected or 100K iterations pass clean.
+
 ## The Bug
 
 When 3 or more Web Workers synchronize using a **generation-counting barrier** with `Atomics.wait` / `Atomics.notify`:
