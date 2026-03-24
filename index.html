@@ -11,7 +11,7 @@
 <div class="container">
     <header>
         <h1><code>Atomics.wait</code> Visibility Bug</h1>
-        <div class="subtitle">Happens-before ordering failure with 3+ workers in V8</div>
+        <div class="subtitle">Cross-engine happens-before ordering failure with 3+ workers</div>
         <div class="attribution">
             Discovered during <a href="https://github.com/LostBeard/SpawnDev.ILGPU" target="_blank" rel="noopener">SpawnDev.ILGPU</a> v4.6.0 development
         </div>
@@ -60,10 +60,17 @@
                 <code>"not-equal"</code> fast path.
             </p>
             <p>
+                <strong>This is not engine-specific.</strong> Confirmed on V8 (Chrome 146, Chrome Canary 148,
+                Node.js 22), SpiderMonkey (Firefox 148), all on Windows 11 / AMD Ryzen 5 7500F. Two
+                independent JS engines exhibit nearly identical ~63-66% failure rates, pointing to a
+                <strong>spec-level issue</strong> in the ECMAScript memory model rather than an
+                implementation bug in any single engine.
+            </p>
+            <p>
                 Replacing <code>Atomics.wait</code> with a pure <code>Atomics.load</code> spin loop
-                eliminates the bug completely. Every <code>Atomics.load</code> is
-                <strong>seq_cst</strong>, so when a worker observes the new generation, all prior
-                stores from all threads are guaranteed visible by the total order property.
+                eliminates the issue completely on <strong>all tested engines</strong>. Every
+                <code>Atomics.load</code> is <strong>seq_cst</strong>, so when a worker observes the
+                new generation, all prior stores from all threads are guaranteed visible.
             </p>
         </div>
 
@@ -219,7 +226,7 @@ function barrierSpin(view, arrivalIdx, genIdx, workerCount) {
                     <div class="test-title">Test 2: 3 Workers + Wait/Notify</div>
                     <div class="test-config">Bug trigger &mdash; escalates from 1K to 100K iterations until failure</div>
                 </div>
-                <span class="test-badge badge-expected-fail">Expected: FAIL on V8</span>
+                <span class="test-badge badge-expected-fail">Expected: FAIL (all engines)</span>
             </div>
             <div class="progress-wrap">
                 <div class="progress-bar"><div class="progress-fill ok" id="prog-test2"></div></div>
@@ -336,6 +343,7 @@ npx serve -p 8080
         </p>
         <p style="margin-top:0.5rem">
             <a href="https://github.com/LostBeard/v8-atomics-wait-bug" target="_blank" rel="noopener">Source on GitHub</a>
+            &nbsp;&middot;&nbsp; <a href="https://issues.chromium.org/issues/495679735" target="_blank" rel="noopener">Chromium Issue #495679735</a>
             &nbsp;&middot;&nbsp; MIT License
         </p>
     </footer>
@@ -380,7 +388,7 @@ npx serve -p 8080
         engine = 'JavaScriptCore (Safari ' + (m ? m[1] : '?') + ')';
     }
     envEngine.textContent = engine;
-    envEngine.className = 'value' + (engine.startsWith('V8') ? ' warn' : '');
+    envEngine.className = 'value warn'; // All tested engines affected
 
     if (!hasSAB) {
         document.getElementById('unsupported-banner').style.display = 'block';
