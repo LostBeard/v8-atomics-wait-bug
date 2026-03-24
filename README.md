@@ -1,6 +1,8 @@
 # V8 `Atomics.wait` Visibility Bug
 
 > **`Atomics.wait` returning `"not-equal"` does not provide happens-before ordering for third-party stores with 3+ workers.**
+>
+> **Chromium Issue:** https://issues.chromium.org/issues/495679735
 
 This repository contains a minimal, runnable demonstration of a memory ordering bug in V8 (Chrome/Node.js) where the `Atomics.wait` / `memory.atomic.wait32` "not-equal" fast path fails to establish happens-before relationships, causing stale reads of shared memory.
 
