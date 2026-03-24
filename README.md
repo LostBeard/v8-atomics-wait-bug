@@ -114,7 +114,7 @@ Three tests isolate the bug precisely:
 |-------------|--------|-----------|--------|
 | Node.js 22.14.0 | V8 12.4.254.21 | **~66%** stale reads | **Affected** — highly reproducible |
 | Chrome 146 | V8 ~14.6.x | **10.5%** stale reads | **Affected** — confirmed with escalating test |
-| Chrome Canary 148 | V8 (latest) | **Affected** | **Affected** — confirmed |
+| Chrome Canary 148.0.7751.0 | V8 (latest) | **Affected** | **Affected** — confirmed |
 | **Firefox 148** | **SpiderMonkey** | **63.2%** stale reads | **Affected** — fails at 1K iterations |
 | Safari (JavaScriptCore) | N/A | — | Not tested |
 
