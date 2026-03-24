@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>V8 Atomics.wait Visibility Bug</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#x26A0;</text></svg>">
+</head>
+<body>
+<div class="container">
+    <header>
+        <h1><code>Atomics.wait</code> Visibility Bug</h1>
+        <div class="subtitle">Happens-before ordering failure with 3+ workers in V8</div>
+        <div class="attribution">
+            Discovered during <a href="https://github.com/nicktanner-lostbeard/SpawnDev.ILGPU" target="_blank" rel="noopener">SpawnDev.ILGPU</a> v4.6.0 development
+        </div>
+    </header>
+
+    <!-- Environment Check -->
+    <section id="env-section">
+        <h2>Environment</h2>
+        <div class="env-grid">
+            <div class="env-item">
+                <span class="label">Cross-Origin Isolated</span>
+                <span class="value" id="env-coi">checking...</span>
+            </div>
+            <div class="env-item">
+                <span class="label">SharedArrayBuffer</span>
+                <span class="value" id="env-sab">checking...</span>
+            </div>
+            <div class="env-item">
+                <span class="label">Hardware Concurrency</span>
+                <span class="value" id="env-cores">checking...</span>
+            </div>
+            <div class="env-item">
+                <span class="label">Browser Engine</span>
+                <span class="value" id="env-engine">checking...</span>
+            </div>
+        </div>
+        <div id="env-error" style="display:none"></div>
+    </section>
+
+    <!-- Bug Explanation -->
+    <section>
+        <h2>The Bug</h2>
+        <div class="explainer">
+            <p>
+                When 3 or more Web Workers synchronize using a <strong>generation-counting barrier</strong>
+                with <code>Atomics.wait</code> / <code>Atomics.notify</code>, workers whose
+                <code>Atomics.wait</code> returns <code>"not-equal"</code> (because the generation
+                already changed) do <strong>not</strong> see prior stores from all other workers.
+            </p>
+            <p>
+                With 2 workers, <code>wait/notify</code> works correctly. With 3+ workers,
+                <strong>~66% of cross-worker reads are stale</strong> &mdash; exactly 2/3, because each
+                worker reads 2 other workers' slots and sees neither. The synchronization edge flows
+                from the last arriver (who calls <code>notify</code>) to woken waiters, but
+                <strong>not transitively</strong> to workers that observe the generation change via the
+                <code>"not-equal"</code> fast path.
+            </p>
+            <p>
+                Replacing <code>Atomics.wait</code> with a pure <code>Atomics.load</code> spin loop
+                eliminates the bug completely. Every <code>Atomics.load</code> is
+                <strong>seq_cst</strong>, so when a worker observes the new generation, all prior
+                stores from all threads are guaranteed visible by the total order property.
+            </p>
+        </div>
+
+        <details>
+            <summary>Barrier Protocol &amp; Race Condition Diagram</summary>
+            <div class="detail-content">
+                <p style="color:var(--text-secondary);margin-bottom:0.75rem">
+                    The generation-counting barrier: each worker arrives, the last arriver bumps the
+                    generation and notifies. The bug is in the "not-equal" return path.
+                </p>
+                <div class="diagram"><span class="dim">Timeline with 3 Workers:</span>
+
+<span class="worker-a">  Worker A</span>              <span class="worker-b">Worker B</span>              <span class="worker-c">Worker C</span>
+<span class="dim">  ──────────            ──────────            ──────────</span>
+<span class="worker-a">  data[0] = 42</span>          <span class="worker-b">data[1] = 99</span>          <span class="worker-c">data[2] = 7</span>        <span class="dim">// non-atomic writes</span>
+<span class="dim">  │                     │                     │</span>
+<span class="worker-a">  add(arrival, 1)</span>       <span class="worker-b">add(arrival, 1)</span>       <span class="worker-c">add(arrival, 1)</span>    <span class="dim">// arrive at barrier</span>
+<span class="worker-a">  arrived = 1</span>           <span class="worker-b">arrived = 2</span>           <span class="worker-c">arrived = 3 (LAST)</span>
+<span class="dim">  │                     │                     │</span>
+<span class="worker-a">  wait(gen, 0)</span>          <span class="worker-b">wait(gen, 0)</span>          <span class="worker-c">store(arrival, 0)</span>
+<span class="worker-a">  ...sleeping...</span>        <span class="dim">│  but gen is           </span><span class="worker-c">add(gen, 1)</span>  <span class="dim">// gen = 1</span>
+<span class="dim">  │                     │  already 1!</span>          <span class="worker-c">notify(gen)</span>
+<span class="dim">  │                     │                     │</span>
+<span class="ok">  woken by notify</span>      <span class="stale">wait returns</span>           <span class="dim">(past barrier)</span>
+<span class="ok">  sees gen = 1</span>          <span class="stale">"not-equal"</span>
+<span class="dim">  │                     │                     │</span>
+<span class="ok">  read data[2] = 7  OK</span>  <span class="stale">read data[0] = ???</span>    <span class="dim">│</span>
+<span class="ok">  read data[1] = 99 OK</span>  <span class="stale">read data[2] = ???</span>    <span class="dim">│</span>
+<span class="dim">                        │</span>
+<span class="dim">                        </span><span class="stale">Worker B's Atomics.wait returned "not-equal" because</span>
+<span class="dim">                        </span><span class="stale">gen was already bumped. V8 does NOT enforce</span>
+<span class="dim">                        </span><span class="stale">happens-before in this case — stale reads result.</span></div>
+            </div>
+        </details>
+
+        <details>
+            <summary>Barrier Algorithm (JavaScript)</summary>
+            <div class="detail-content">
+<pre><code>// Generation-counting barrier — the standard pattern
+function barrier(view, arrivalIdx, genIdx, workerCount) {
+    const myGen = Atomics.load(view, genIdx);
+    const arrived = Atomics.add(view, arrivalIdx, 1) + 1;
+
+    if (arrived === workerCount) {
+        // Last arriver: reset counter, bump generation, notify
+        Atomics.store(view, arrivalIdx, 0);
+        Atomics.add(view, genIdx, 1);
+        Atomics.notify(view, genIdx);
+    } else {
+        // Wait for generation to change
+        while (Atomics.load(view, genIdx) === myGen) {
+            Atomics.wait(view, genIdx, myGen);
+            //         ^^^ BUG: "not-equal" return does NOT provide
+            //             happens-before for third-party stores
+        }
+    }
+}
+
+// Workaround: pure spin barrier
+function barrierSpin(view, arrivalIdx, genIdx, workerCount) {
+    const myGen = Atomics.load(view, genIdx);
+    const arrived = Atomics.add(view, arrivalIdx, 1) + 1;
+
+    if (arrived === workerCount) {
+        Atomics.store(view, arrivalIdx, 0);
+        Atomics.add(view, genIdx, 1);
+    } else {
+        while (Atomics.load(view, genIdx) === myGen) {
+            // Pure spin — every Atomics.load is seq_cst
+            // When we see the new gen, ALL prior stores are visible
+        }
+    }
+}</code></pre>
+            </div>
+        </details>
+
+        <details>
+            <summary>ECMAScript Spec Reference</summary>
+            <div class="detail-content">
+                <p style="color:var(--text-secondary);margin-bottom:0.75rem">
+                    The ECMAScript specification defines <code>Atomics.wait</code> in
+                    <strong>Section 25.4.12</strong> (ES2024). The agent enters the WaiterList
+                    critical section, then compares the value. If it differs, the function returns
+                    <code>"not-equal"</code> without suspending.
+                </p>
+                <p style="color:var(--text-secondary);margin-bottom:0.75rem">
+                    The <strong>Memory Model</strong> (Section 29) defines synchronization via
+                    <em>Synchronize</em> events. <code>Atomics.notify</code> synchronizes with
+                    agents it wakes. The question is: does the critical section entry in
+                    <code>Atomics.wait</code> (even on the "not-equal" fast path) create a
+                    synchronization edge to all prior writes from all agents?
+                </p>
+                <p style="color:var(--text-secondary);margin-bottom:0.75rem">
+                    The WebAssembly Threads proposal specifies <code>memory.atomic.wait32</code>
+                    to perform an <strong>ARD<sub>SEQCST</sub></strong> (atomic read with seq_cst
+                    ordering) as its first step. This should establish ordering regardless of the
+                    return path. If V8's "not-equal" fast path skips the full fence, that is a
+                    conformance issue.
+                </p>
+            </div>
+        </details>
+    </section>
+
+    <!-- Test Runner -->
+    <section id="test-section" style="display:none">
+        <h2>Live Tests</h2>
+
+        <div class="controls">
+            <button class="btn btn-primary" id="btn-run-all">Run All Tests</button>
+            <button class="btn" id="btn-reset" disabled>Reset</button>
+            <span class="iter-label" id="escalation-status"></span>
+        </div>
+
+        <!-- Test 1: 2 workers + wait/notify (control) -->
+        <div class="test-card" id="card-test1">
+            <div class="test-header">
+                <div>
+                    <div class="test-title">Test 1: 2 Workers + Wait/Notify</div>
+                    <div class="test-config">Control &mdash; should pass (bug requires 3+ workers)</div>
+                </div>
+                <span class="test-badge badge-expected-pass">Expected: PASS</span>
+            </div>
+            <div class="progress-wrap">
+                <div class="progress-bar"><div class="progress-fill ok" id="prog-test1"></div></div>
+            </div>
+            <div class="stats">
+                <div class="stat">
+                    <span class="stat-label">Iterations</span>
+                    <span class="stat-value" id="stat-test1-iter">-</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Cross-Worker Reads</span>
+                    <span class="stat-value" id="stat-test1-reads">-</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Stale Reads</span>
+                    <span class="stat-value" id="stat-test1-stale">-</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Error Rate</span>
+                    <span class="stat-value" id="stat-test1-rate">-</span>
+                </div>
+            </div>
+            <div style="margin-top:0.5rem">
+                <span class="test-badge badge-pending" id="badge-test1">PENDING</span>
+            </div>
+        </div>
+
+        <!-- Test 2: 3 workers + wait/notify (BUG) -->
+        <div class="test-card" id="card-test2">
+            <div class="test-header">
+                <div>
+                    <div class="test-title">Test 2: 3 Workers + Wait/Notify</div>
+                    <div class="test-config">Bug trigger &mdash; escalates from 1K to 100K iterations until failure</div>
+                </div>
+                <span class="test-badge badge-expected-fail">Expected: FAIL on V8</span>
+            </div>
+            <div class="progress-wrap">
+                <div class="progress-bar"><div class="progress-fill ok" id="prog-test2"></div></div>
+            </div>
+            <div class="stats">
+                <div class="stat">
+                    <span class="stat-label">Iterations</span>
+                    <span class="stat-value" id="stat-test2-iter">-</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Cross-Worker Reads</span>
+                    <span class="stat-value" id="stat-test2-reads">-</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Stale Reads</span>
+                    <span class="stat-value" id="stat-test2-stale">-</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Error Rate</span>
+                    <span class="stat-value" id="stat-test2-rate">-</span>
+                </div>
+            </div>
+            <div style="margin-top:0.5rem">
+                <span class="test-badge badge-pending" id="badge-test2">PENDING</span>
+            </div>
+        </div>
+
+        <!-- Test 3: 3 workers + spin (workaround) -->
+        <div class="test-card" id="card-test3">
+            <div class="test-header">
+                <div>
+                    <div class="test-title">Test 3: 3 Workers + Spin Barrier</div>
+                    <div class="test-config">Workaround &mdash; Atomics.load spin provides correct seq_cst ordering</div>
+                </div>
+                <span class="test-badge badge-expected-pass">Expected: PASS</span>
+            </div>
+            <div class="progress-wrap">
+                <div class="progress-bar"><div class="progress-fill ok" id="prog-test3"></div></div>
+            </div>
+            <div class="stats">
+                <div class="stat">
+                    <span class="stat-label">Iterations</span>
+                    <span class="stat-value" id="stat-test3-iter">-</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Cross-Worker Reads</span>
+                    <span class="stat-value" id="stat-test3-reads">-</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Stale Reads</span>
+                    <span class="stat-value" id="stat-test3-stale">-</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Error Rate</span>
+                    <span class="stat-value" id="stat-test3-rate">-</span>
+                </div>
+            </div>
+            <div style="margin-top:0.5rem">
+                <span class="test-badge badge-pending" id="badge-test3">PENDING</span>
+            </div>
+        </div>
+    </section>
+
+    <!-- Results Summary (shown after all tests) -->
+    <section id="results-section" style="display:none">
+        <h2>Results Summary</h2>
+        <table class="results-table">
+            <thead>
+                <tr>
+                    <th>Test</th>
+                    <th>Workers</th>
+                    <th>Barrier</th>
+                    <th>Stale Reads</th>
+                    <th>Error Rate</th>
+                    <th>Result</th>
+                </tr>
+            </thead>
+            <tbody id="results-tbody"></tbody>
+        </table>
+        <div id="results-interpretation" style="margin-top:1rem;color:var(--text-secondary)"></div>
+    </section>
+
+    <!-- Unsupported banner (shown if SharedArrayBuffer unavailable) -->
+    <div id="unsupported-banner" class="error-banner" style="display:none">
+        <strong>SharedArrayBuffer is not available.</strong>
+        <p style="margin-top:0.5rem;color:var(--text-secondary)">
+            This demo requires <code>crossOriginIsolated</code> mode. If you're viewing this
+            on GitHub Pages, the service worker should enable it automatically. If it didn't work,
+            try serving locally:
+        </p>
+<pre style="margin-top:0.75rem"><code># Python
+python -m http.server 8080
+
+# Node.js (npx)
+npx serve -p 8080
+
+# Then open http://localhost:8080
+# and add to Chrome flags or use the --enable-features=SharedArrayBuffer flag</code></pre>
+        <p style="margin-top:0.75rem;color:var(--text-secondary)">
+            Or run the Node.js reproducer directly: <code>node three_worker_barrier.mjs</code>
+        </p>
+    </div>
+
+    <footer>
+        <p>
+            Discovered by the <a href="https://github.com/nicktanner-lostbeard/SpawnDev.ILGPU" target="_blank" rel="noopener">SpawnDev.ILGPU</a> team
+            during v4.6.0 development
+        </p>
+        <p style="margin-top:0.35rem;font-size:0.8rem">
+            <strong>TJ (<a href="https://github.com/nicktanner-lostbeard" target="_blank" rel="noopener">@LostBeard</a>)</strong> &mdash; Project lead
+            &nbsp;&middot;&nbsp; <strong>Riker</strong> &mdash; Bug isolation &amp; reproducer
+            &nbsp;&middot;&nbsp; <strong>Data</strong> &mdash; Spec analysis &amp; confirmation
+            &nbsp;&middot;&nbsp; <strong>Tuvok</strong> &mdash; Protocol tracing
+        </p>
+        <p style="margin-top:0.5rem">
+            <a href="https://github.com/nicktanner-lostbeard/V8Bug" target="_blank" rel="noopener">Source on GitHub</a>
+            &nbsp;&middot;&nbsp; MIT License
+        </p>
+    </footer>
+</div>
+
+<script src="coi-serviceworker.js"></script>
+<script>
+(function () {
+    'use strict';
+
+    // --- Environment detection ---
+
+    const envCOI = document.getElementById('env-coi');
+    const envSAB = document.getElementById('env-sab');
+    const envCores = document.getElementById('env-cores');
+    const envEngine = document.getElementById('env-engine');
+
+    const isIsolated = window.crossOriginIsolated === true;
+    const hasSAB = typeof SharedArrayBuffer !== 'undefined';
+    const cores = navigator.hardwareConcurrency || 'unknown';
+
+    envCOI.textContent = isIsolated ? 'Yes' : 'No';
+    envCOI.className = 'value ' + (isIsolated ? 'ok' : 'fail');
+
+    envSAB.textContent = hasSAB ? 'Available' : 'Unavailable';
+    envSAB.className = 'value ' + (hasSAB ? 'ok' : 'fail');
+
+    envCores.textContent = cores;
+    envCores.className = 'value' + (cores >= 4 ? ' ok' : cores >= 2 ? ' warn' : '');
+
+    // Detect engine
+    let engine = 'Unknown';
+    const ua = navigator.userAgent;
+    if (ua.includes('Chrome') || ua.includes('Chromium')) {
+        const m = ua.match(/(?:Chrome|Chromium)\/(\d+)/);
+        engine = 'V8 (Chrome ' + (m ? m[1] : '?') + ')';
+    } else if (ua.includes('Firefox')) {
+        const m = ua.match(/Firefox\/(\d+)/);
+        engine = 'SpiderMonkey (Firefox ' + (m ? m[1] : '?') + ')';
+    } else if (ua.includes('Safari') && !ua.includes('Chrome')) {
+        const m = ua.match(/Version\/(\d+)/);
+        engine = 'JavaScriptCore (Safari ' + (m ? m[1] : '?') + ')';
+    }
+    envEngine.textContent = engine;
+    envEngine.className = 'value' + (engine.startsWith('V8') ? ' warn' : '');
+
+    if (!hasSAB) {
+        document.getElementById('unsupported-banner').style.display = 'block';
+        return;
+    }
+
+    // Show test section
+    document.getElementById('test-section').style.display = '';
+
+    // --- Test runner ---
+
+    // Escalation: Test 2 starts at 1K iterations and doubles each round
+    // until a stale read is detected or the ceiling is reached.
+    const ESCALATION_START = 1000;
+    const ESCALATION_CEILING = 100000;
+    const TEST_TIMEOUT_MS = 30000;
+
+    const results = {};
+    let running = false;
+
+    const btnRunAll = document.getElementById('btn-run-all');
+    const btnReset = document.getElementById('btn-reset');
+    const statusEl = document.getElementById('escalation-status');
+
+    btnRunAll.addEventListener('click', runAll);
+    btnReset.addEventListener('click', resetAll);
+
+    async function runAll() {
+        if (running) return;
+        running = true;
+        btnRunAll.disabled = true;
+        btnReset.disabled = true;
+        document.getElementById('results-section').style.display = 'none';
+
+        // Step 1: Test 1 — 2 workers, wait/notify (control, fixed at 50K)
+        statusEl.textContent = 'Running control test (2 workers)...';
+        await runTest('test1', 2, 'wait-notify', 50000);
+
+        // Step 2: Test 2 — 3 workers, wait/notify — ESCALATE until failure
+        let iters = ESCALATION_START;
+        let test2Failed = false;
+        let cumulativeErrors = 0;
+        let cumulativeChecks = 0;
+
+        while (iters <= ESCALATION_CEILING) {
+            statusEl.textContent = 'Test 2: trying ' + iters.toLocaleString() + ' iterations...';
+            var r = await runTest('test2', 3, 'wait-notify', iters);
+
+            cumulativeErrors += r.errors;
+            cumulativeChecks += r.checks;
+
+            if (r.errors > 0 || r.timedOut) {
+                test2Failed = true;
+                break;
+            }
+            iters *= 2;
+        }
+
+        // Update Test 2 card with cumulative results
+        var finalRate = cumulativeChecks > 0 ? (cumulativeErrors / cumulativeChecks * 100) : 0;
+        var rateStr = finalRate < 0.01 && cumulativeErrors > 0
+            ? (cumulativeErrors + ' / ' + cumulativeChecks.toLocaleString())
+            : finalRate.toFixed(1) + '%';
+
+        results.test2 = {
+            label: '3W wait/notify',
+            workerCount: 3,
+            mode: 'wait/notify',
+            stale: cumulativeErrors,
+            totalReads: cumulativeChecks,
+            rate: rateStr,
+            passed: !test2Failed,
+            iterations: iters
+        };
+
+        // Step 3: Test 3 — 3 workers, spin — run at the iteration count where Test 2 failed
+        var spinIters = test2Failed ? iters : ESCALATION_CEILING;
+        statusEl.textContent = 'Running spin barrier test at ' + spinIters.toLocaleString() + ' iterations...';
+        await runTest('test3', 3, 'spin', spinIters);
+
+        statusEl.textContent = '';
+        showSummary();
+        running = false;
+        btnReset.disabled = false;
+    }
+
+    function resetAll() {
+        var ids = ['test1', 'test2', 'test3'];
+        for (var i = 0; i < ids.length; i++) {
+            var id = ids[i];
+            document.getElementById('card-' + id).className = 'test-card';
+            document.getElementById('prog-' + id).style.width = '0%';
+            document.getElementById('prog-' + id).className = 'progress-fill ok';
+            document.getElementById('stat-' + id + '-iter').textContent = '-';
+            document.getElementById('stat-' + id + '-reads').textContent = '-';
+            document.getElementById('stat-' + id + '-stale').textContent = '-';
+            document.getElementById('stat-' + id + '-rate').textContent = '-';
+            document.getElementById('stat-' + id + '-stale').className = 'stat-value';
+            var badge = document.getElementById('badge-' + id);
+            badge.textContent = 'PENDING';
+            badge.className = 'test-badge badge-pending';
+        }
+        document.getElementById('results-section').style.display = 'none';
+        statusEl.textContent = '';
+        btnRunAll.disabled = false;
+        btnReset.disabled = true;
+    }
+
+    function runTest(testId, workerCount, mode, iterations) {
+        return new Promise(function (resolve) {
+            var card = document.getElementById('card-' + testId);
+            var progFill = document.getElementById('prog-' + testId);
+            var statIter = document.getElementById('stat-' + testId + '-iter');
+            var statReads = document.getElementById('stat-' + testId + '-reads');
+            var statStale = document.getElementById('stat-' + testId + '-stale');
+            var statRate = document.getElementById('stat-' + testId + '-rate');
+            var badge = document.getElementById('badge-' + testId);
+
+            card.className = 'test-card running';
+            badge.textContent = 'RUNNING';
+            badge.className = 'test-badge badge-running';
+            progFill.style.width = '0%';
+            progFill.className = 'progress-fill ok';
+
+            var sab = new SharedArrayBuffer(4096);
+            var workers = [];
+            var doneCount = 0;
+            var totalErrors = 0;
+            var totalChecks = 0;
+            var maxIter = 0;
+            var resolved = false;
+            var timeoutTimer = null;
+
+            function finalize(timedOut) {
+                if (resolved) return;
+                resolved = true;
+                if (timeoutTimer) clearTimeout(timeoutTimer);
+
+                progFill.style.width = '100%';
+
+                var rate = totalChecks > 0 ? (totalErrors / totalChecks * 100) : 0;
+                var rateStr = rate < 0.01 && totalErrors > 0
+                    ? (totalErrors + ' / ' + totalChecks.toLocaleString())
+                    : rate.toFixed(1) + '%';
+
+                statIter.textContent = (timedOut ? maxIter.toLocaleString() + ' (timed out)' :
+                    iterations.toLocaleString()) + ' / ' + iterations.toLocaleString();
+                statReads.textContent = totalChecks.toLocaleString();
+                statStale.textContent = totalErrors.toLocaleString();
+                statStale.className = 'stat-value' + (totalErrors > 0 ? ' error-count' : ' zero-errors');
+                statRate.textContent = rateStr;
+
+                var passed = totalErrors === 0 && !timedOut;
+                card.className = 'test-card ' + (passed ? 'pass' : 'fail');
+                progFill.className = 'progress-fill ' + (passed ? 'ok' : 'error');
+                badge.textContent = passed ? 'PASS' : 'FAIL';
+                badge.className = 'test-badge ' + (passed ? 'badge-pass' : 'badge-fail');
+
+                results[testId] = {
+                    label: workerCount + 'W ' + mode,
+                    workerCount: workerCount,
+                    mode: mode === 'wait-notify' ? 'wait/notify' : 'spin',
+                    stale: totalErrors,
+                    totalReads: totalChecks,
+                    rate: rateStr,
+                    passed: passed,
+                    iterations: iterations
+                };
+
+                workers.forEach(function (w) { w.terminate(); });
+                resolve({ errors: totalErrors, checks: totalChecks, timedOut: timedOut });
+            }
+
+            timeoutTimer = setTimeout(function () { finalize(true); }, TEST_TIMEOUT_MS);
+
+            for (var i = 0; i < workerCount; i++) {
+                var w = new Worker('worker.js');
+                workers.push(w);
+
+                w.onmessage = function (e) {
+                    if (resolved) return;
+                    var msg = e.data;
+                    if (msg.type === 'progress') {
+                        if (msg.iteration > maxIter) maxIter = msg.iteration;
+                        var pct = Math.min(100, (maxIter / iterations) * 100);
+                        progFill.style.width = pct + '%';
+                        statIter.textContent = maxIter.toLocaleString() + ' / ' + iterations.toLocaleString();
+
+                        if (msg.errors > 0) {
+                            progFill.className = 'progress-fill error';
+                        }
+                        statReads.textContent = msg.checks.toLocaleString();
+                        statStale.textContent = msg.errors.toLocaleString();
+                        statStale.className = 'stat-value' + (msg.errors > 0 ? ' error-count' : ' zero-errors');
+                        if (msg.checks > 0) {
+                            var r = (msg.errors / msg.checks * 100);
+                            statRate.textContent = r < 0.01 && msg.errors > 0
+                                ? (msg.errors + ' / ' + msg.checks.toLocaleString())
+                                : r.toFixed(1) + '%';
+                        }
+                    } else if (msg.type === 'done') {
+                        totalErrors += msg.errors;
+                        totalChecks += msg.checks;
+                        doneCount++;
+
+                        if (doneCount === workerCount) {
+                            finalize(false);
+                        }
+                    }
+                };
+
+                w.postMessage({
+                    mode: mode,
+                    sab: sab,
+                    workerId: i,
+                    workerCount: workerCount,
+                    iterations: iterations
+                });
+            }
+        });
+    }
+
+    function showSummary() {
+        var section = document.getElementById('results-section');
+        var tbody = document.getElementById('results-tbody');
+        var interp = document.getElementById('results-interpretation');
+
+        tbody.innerHTML = '';
+
+        var ids = ['test1', 'test2', 'test3'];
+        for (var i = 0; i < ids.length; i++) {
+            var r = results[ids[i]];
+            if (!r) continue;
+            var tr = document.createElement('tr');
+            tr.innerHTML =
+                '<td>' + r.label + '</td>' +
+                '<td>' + r.workerCount + '</td>' +
+                '<td>' + r.mode + '</td>' +
+                '<td>' + r.stale.toLocaleString() + ' / ' + r.totalReads.toLocaleString() + '</td>' +
+                '<td>' + r.rate + '</td>' +
+                '<td class="' + (r.passed ? 'pass-cell' : 'fail-cell') + '">' +
+                (r.passed ? 'PASS' : 'FAIL') + '</td>';
+            tbody.appendChild(tr);
+        }
+
+        var t1 = results.test1;
+        var t2 = results.test2;
+        var t3 = results.test3;
+
+        var html = '';
+        if (t2 && !t2.passed && t1 && t1.passed && t3 && t3.passed) {
+            html = '<p><strong style="color:var(--red)">Bug confirmed.</strong> ' +
+                'Test 2 (3 workers + wait/notify) detected ' + t2.stale.toLocaleString() +
+                ' stale read' + (t2.stale === 1 ? '' : 's') +
+                ' at ' + t2.iterations.toLocaleString() + ' iterations, ' +
+                'while Test 1 (2 workers) and Test 3 (spin barrier) both pass with 0 errors. ' +
+                'This demonstrates that <code>Atomics.wait</code> returning <code>"not-equal"</code> ' +
+                'does not provide happens-before ordering for third-party stores.</p>';
+        } else if (t2 && t2.passed && t1 && t1.passed && t3 && t3.passed) {
+            html = '<p><strong style="color:var(--green)">Bug not reproduced.</strong> ' +
+                'All tests passed through ' + ESCALATION_CEILING.toLocaleString() + ' iterations. ' +
+                'This bug is not applicable to this environment, or it has been fixed in this engine version.</p>';
+        } else {
+            html = '<p>Tests completed. Review the results above for details.</p>';
+        }
+
+        interp.innerHTML = html;
+        section.style.display = '';
+    }
+
+})();
+</script>
+</body>
+</html>
