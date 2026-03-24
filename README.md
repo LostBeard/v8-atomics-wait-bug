@@ -116,6 +116,7 @@ Three tests isolate the bug precisely:
 | Chrome 146 | V8 ~14.6.x | **10.5%** stale reads | **Affected** — confirmed with escalating test |
 | Chrome Canary 148.0.7751.0 | V8 (latest) | **1 / 135,000** stale reads | **Affected** — rare but confirmed |
 | **Firefox 148** | **SpiderMonkey** | **63.2%** stale reads | **Affected** — fails at 1K iterations |
+| Android Chrome (ARM) | V8 (latest) | **22.3%** (2 workers!), **6.8%** (3 workers) | **Affected** — ARM fails even with 2 workers |
 | Safari (JavaScriptCore) | N/A | — | Not tested |
 
 **CRITICAL UPDATE:** This is **NOT engine-specific**. Firefox 148 (SpiderMonkey) exhibits **63.2% stale reads at just 1,000 iterations** — nearly identical to Node.js V8's ~66%. Chrome V8 ~14.6 shows a lower rate (10.5%) but all three engines fail. This points to either:
@@ -124,6 +125,8 @@ Three tests isolate the bug precisely:
 - A **hardware-level issue** (AMD Ryzen 5 7500F TSO behavior)
 
 The fact that two completely independent JavaScript engines (V8 and SpiderMonkey) exhibit the same bug at nearly the same rate strongly suggests this is a **spec-level issue**, not an engine implementation bug.
+
+**ARM is the definitive proof.** On Android (MediaTek Dimensity 8300, ARM Cortex-A715/A510), the bug manifests with just **2 workers** at a 22.3% error rate — the same 2-worker test that passes on every x86 system. x86's Total Store Order (TSO) hardware memory model was partially masking the bug by providing store ordering that ARM's relaxed memory model does not. The `Atomics.wait` "not-equal" fast path is **missing a memory fence** that ARM requires and x86 provides implicitly.
 
 **System tested on:** Windows 11, AMD Ryzen 5 7500F (6 cores / 12 threads)
 
