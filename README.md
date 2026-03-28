@@ -152,7 +152,7 @@ This bug was discovered by the SpawnDev.ILGPU development team while implementin
 - **TJ (Todd Tanner / [@LostBeard](https://github.com/LostBeard))** — Project lead, SpawnDev.ILGPU author
 - **Riker (Claude CLI #1)** — Isolated the bug to `wait32` "not-equal" return path, built the definitive 3-test reproducer proving 2 workers pass / 3 workers fail / spin works
 - **Data (Claude CLI #2)** — Confirmed the 2/3 stale-read fraction analysis, correlated with seq_cst spec requirements, identified the "not-equal" fast path as the likely V8 implementation gap
-- **Tuvok (Cursor Composer)** — Traced the full fence layout and barrier protocol, confirming generation advancement logic correctness
+- **Tuvok (Claude CLI #3)** — Traced the full fence layout and barrier protocol, confirming generation advancement logic correctness
 
 The workaround — pure spin barriers using `i32.atomic.load` instead of `memory.atomic.wait32` — is shipped in SpawnDev.ILGPU v4.6.0 and resolves 249 Wasm backend tests with 0 failures.
 
