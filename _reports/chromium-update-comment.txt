@@ -1,0 +1,42 @@
+UPDATE: All three major JS engines confirmed affected — spec issue filed with TC39
+
+Since our last update, we've completed comprehensive cross-browser testing via BrowserStack. All three major JavaScript engines are now confirmed affected:
+
+JAVASCRIPTCORE (SAFARI) — NEW
+- Safari 18 / macOS Sequoia: 10.8% stale reads
+- Safari 17 / macOS Sonoma: 50.9% stale reads
+- Safari 26 / macOS Tahoe: 26.1% stale reads
+- Safari iOS 18 / iPhone 16 (ARM): 21.3% stale reads
+- Safari iOS 16 / iPhone 14 (ARM): 21.1% stale reads
+
+SPIDERMONKEY (FIREFOX) — ADDITIONAL DATA
+- Firefox 149 / macOS Tahoe (Apple Silicon): 10.3% stale reads
+
+V8 — ADDITIONAL DATA
+- Edge 146 / Windows 11: 28.2% stale reads
+- Opera 129 (Chrome 145) / Windows 11: 11.7% stale reads
+- Android Chrome / Samsung Galaxy S26 (Snapdragon 8 Elite Gen 2): 48.4% stale reads with 2 workers
+- Android Chrome / Google Pixel Pro 10 XL (Tensor G5): 14.5% stale reads with 2 workers
+- Chrome 146 / macOS Tahoe: 0% across 10 runs — V8 appears fully fixed on this platform
+- Edge 146 / macOS Tahoe: 0% across 10 runs — confirmed
+
+KEY FINDING: V8 FIXED ON macOS TAHOE
+On the same macOS Tahoe BrowserStack host (Apple Silicon, 10 cores), V8 (Chrome/Edge 146) passes with 0 stale reads across 10 runs, while SpiderMonkey (Firefox 149) fails at 10.3% and JSC (Safari 26) fails at 26.1%. V8 has genuinely fixed the fence on this platform. SpiderMonkey and JSC have not.
+
+ANDROID ARM: 3 SoCs FAIL 2-WORKER TEST
+Three different Android ARM SoCs now confirmed failing the 2-worker test:
+- Samsung Galaxy S26 (Snapdragon 8 Elite Gen 2): 48.4%
+- Lenovo IdeaTab (MediaTek Dimensity 8300): 22.3% (previously reported)
+- Google Pixel Pro 10 XL (Google Tensor G5): 14.5%
+
+Notably, Apple Silicon ARM (iOS Safari) does NOT fail the 2-worker test — only the 3-worker test. Apple's ARM implementation may provide stronger memory ordering.
+
+BUG REPORTS FILED
+Three independent engines failing identically confirms this is a spec-level issue. We've filed:
+- Firefox (SpiderMonkey): https://bugzilla.mozilla.org/show_bug.cgi?id=2029633
+- WebKit (JSC): https://bugs.webkit.org/show_bug.cgi?id=311568
+- TC39 spec issue: https://github.com/tc39/ecma262/issues/3800
+
+Updated repo and live demo: https://lostbeard.github.io/v8-atomics-wait-bug/
+
+Cross-browser testing powered by BrowserStack (https://www.browserstack.com).

@@ -16,6 +16,8 @@ This repository contains a minimal, runnable demonstration of a **cross-engine**
 
 Run the tests directly in your browser — no install required. The demo auto-escalates iterations until the bug is detected or 100K iterations pass clean.
 
+> **Note:** This is a race condition, so results are non-deterministic. A test may pass on one run and fail on the next. A clean pass does not prove the bug is absent — only that the timing didn't trigger it in that run.
+
 ## The Bug
 
 When 3 or more Web Workers synchronize using a **generation-counting barrier** with `Atomics.wait` / `Atomics.notify`:
