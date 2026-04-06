@@ -183,6 +183,10 @@ function barrierSpin(view, arrivalIdx, genIdx, workerCount) {
             <button class="btn" id="btn-reset" disabled>Reset</button>
             <span class="iter-label" id="escalation-status"></span>
         </div>
+        <p style="color:var(--text-secondary);font-size:0.85rem;margin-top:0.5rem">
+            <strong>Note:</strong> This is a race condition &mdash; results are non-deterministic.
+            A test may pass on one run and fail on the next. Run multiple times for confidence.
+        </p>
 
         <!-- Test 1: 2 workers + wait/notify (control) -->
         <div class="test-card" id="card-test1">
@@ -675,9 +679,10 @@ function copyResults() {
                 'This demonstrates that <code>Atomics.wait</code> returning <code>"not-equal"</code> ' +
                 'does not provide happens-before ordering for third-party stores.</p>';
         } else if (t2 && t2.passed && t1 && t1.passed && t3 && t3.passed) {
-            html = '<p><strong style="color:var(--green)">Bug not reproduced.</strong> ' +
+            html = '<p><strong style="color:var(--green)">Bug not reproduced in this run.</strong> ' +
                 'All tests passed through ' + ESCALATION_CEILING.toLocaleString() + ' iterations. ' +
-                'This bug is not applicable to this environment, or it has been fixed in this engine version.</p>';
+                'This is a race condition &mdash; results are non-deterministic. A clean pass does not prove the bug is absent. ' +
+                'Run multiple times for confidence, or try the Node.js reproducer for higher error rates.</p>';
         } else {
             html = '<p>Tests completed. Review the results above for details.</p>';
         }
