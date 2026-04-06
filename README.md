@@ -1,10 +1,14 @@
-# V8 `Atomics.wait` Visibility Bug
+# `Atomics.wait` Visibility Bug
 
 > **`Atomics.wait` returning `"not-equal"` does not provide happens-before ordering for third-party stores with 3+ workers.**
 >
-> **Chromium Issue:** https://issues.chromium.org/issues/495679735
+> **Bug Reports:**
+> - **Chromium:** https://issues.chromium.org/issues/495679735
+> - **Firefox (Bugzilla):** *Filing in progress*
+> - **WebKit:** *Filing in progress*
+> - **TC39 (spec gap):** *Draft prepared*
 
-This repository contains a minimal, runnable demonstration of a memory ordering bug in V8 (Chrome/Node.js) where the `Atomics.wait` / `memory.atomic.wait32` "not-equal" fast path fails to establish happens-before relationships, causing stale reads of shared memory.
+This repository contains a minimal, runnable demonstration of a **cross-engine** memory ordering bug where the `Atomics.wait` / `memory.atomic.wait32` "not-equal" fast path fails to establish happens-before relationships, causing stale reads of shared memory. **Three independent JavaScript engines are affected: V8, SpiderMonkey, and JavaScriptCore.**
 
 ## Live Demo
 
@@ -82,7 +86,7 @@ Three tests isolate the bug precisely:
 | 2. Bug trigger (3 workers) | 3 | wait/notify | 39,368 / 375,000 | **10.5%** | **FAIL** |
 | 3. Workaround (spin) | 3 | spin (Atomics.load) | 0 / 288,000 | 0% | **PASS** |
 
-### Firefox 148 (SpiderMonkey) — escalating 1K to 100K
+### Firefox 148 (SpiderMonkey) — Windows 11, escalating 1K to 100K
 
 | Test | Workers | Barrier | Stale Reads | Error Rate | Result |
 |------|---------|---------|-------------|------------|--------|
@@ -90,8 +94,16 @@ Three tests isolate the bug precisely:
 | 2. Bug trigger (3 workers) | 3 | wait/notify | 1,897 / 3,000 | **63.2%** | **FAIL** |
 | 3. Workaround (spin) | 3 | spin (Atomics.load) | 0 / 9,000 | 0% | **PASS** |
 
+### Safari 18 (JavaScriptCore) — macOS Sequoia via BrowserStack
+
+| Test | Workers | Barrier | Stale Reads | Error Rate | Result |
+|------|---------|---------|-------------|------------|--------|
+| 1. Control (2 workers) | 2 | wait/notify | 0 / 200,000 | 0% | **PASS** |
+| 2. Bug trigger (3 workers) | 3 | wait/notify | 1,625 / 15,000 | **10.8%** | **FAIL** |
+| 3. Workaround (spin) | 3 | spin (Atomics.load) | 0 / 18,000 | 0% | **PASS** |
+
 - **Test 1** proves the barrier algorithm is correct with 2 workers.
-- **Test 2** proves it breaks with 3 workers and `Atomics.wait` on **all tested engines** (V8, SpiderMonkey). Firefox fails at just 1,000 iterations with 63.2% — nearly identical to Node.js V8's ~66%.
+- **Test 2** proves it breaks with 3 workers and `Atomics.wait` on **all three major engines** (V8, SpiderMonkey, JavaScriptCore).
 - **Test 3** proves the spin workaround fixes it on all tested engines.
 
 ## Spec References
@@ -110,25 +122,49 @@ Three tests isolate the bug precisely:
 
 ## Affected Environments
 
-| Environment | Engine | Error Rate | Status |
-|-------------|--------|-----------|--------|
-| Node.js 22.14.0 | V8 12.4.254.21 | **~66%** stale reads | **Affected** — highly reproducible |
-| Chrome 146 | V8 ~14.6.x | **10.5%** stale reads | **Affected** — confirmed with escalating test |
-| Chrome Canary 148.0.7751.0 | V8 (latest) | **1 / 135,000** stale reads | **Affected** — rare but confirmed |
-| **Firefox 148** | **SpiderMonkey** | **63.2%** stale reads | **Affected** — fails at 1K iterations |
-| Android Chrome (ARM) | V8 (latest) | **22.3%** (2 workers!), **6.8%** (3 workers) | **Affected** — ARM fails even with 2 workers |
-| Safari (JavaScriptCore) | N/A | — | Not tested |
+### V8 (Chrome / Edge / Node.js)
 
-**CRITICAL UPDATE:** This is **NOT engine-specific**. Firefox 148 (SpiderMonkey) exhibits **63.2% stale reads at just 1,000 iterations** — nearly identical to Node.js V8's ~66%. Chrome V8 ~14.6 shows a lower rate (10.5%) but all three engines fail. This points to either:
-- A **spec gap** in the ECMAScript/WebAssembly memory model (the "not-equal" path genuinely lacks ordering guarantees)
-- A **platform-level issue** (Windows `WaitOnAddress` / futex implementation)
-- A **hardware-level issue** (AMD Ryzen 5 7500F TSO behavior)
+| Environment | Platform | Error Rate | Status |
+|-------------|----------|-----------|--------|
+| Node.js 22.14.0 (V8 12.4) | x86-64, Windows 11 | **~66%** | **Affected** — highly reproducible |
+| Chrome 146 (V8 ~14.6) | x86-64, Windows 11 | **10.5%** | **Affected** — confirmed |
+| Edge 146 (V8 ~14.6) | x86-64, Windows 11 | **28.2%** | **Affected** — confirmed via BrowserStack |
+| Chrome Canary 148 (V8 latest) | x86-64, Windows 11 | **0.0007%** (1/135K) | **Affected** — rare but confirmed |
+| Android Chrome (V8 latest) | ARM Cortex-A715/A510 | **22.3% (2 workers!)** | **Affected** — ARM fails even with 2 workers |
+| Chrome 146 | macOS Tahoe (Apple Silicon) | **0%** (10 runs) | **Not reproduced** — V8 appears fixed here |
+| Edge 146 | macOS Tahoe (Apple Silicon) | **0%** (10 runs) | **Not reproduced** — V8 appears fixed here |
+| Opera (Chrome 145) | macOS Tahoe (Apple Silicon) | **0%** | **Not reproduced** — V8 appears fixed here |
 
-The fact that two completely independent JavaScript engines (V8 and SpiderMonkey) exhibit the same bug at nearly the same rate strongly suggests this is a **spec-level issue**, not an engine implementation bug.
+### SpiderMonkey (Firefox)
 
-**ARM is the definitive proof.** On Android (MediaTek Dimensity 8300, ARM Cortex-A715/A510), the bug manifests with just **2 workers** at a 22.3% error rate — the same 2-worker test that passes on every x86 system. x86's Total Store Order (TSO) hardware memory model was partially masking the bug by providing store ordering that ARM's relaxed memory model does not. The `Atomics.wait` "not-equal" fast path is **missing a memory fence** that ARM requires and x86 provides implicitly.
+| Environment | Platform | Error Rate | Status |
+|-------------|----------|-----------|--------|
+| Firefox 148 | x86-64, Windows 11 | **63.2%** | **Affected** — fails at 1K iterations |
+| Firefox 149 | macOS Tahoe (Apple Silicon) | **10.3%** | **Affected** — confirmed via BrowserStack |
 
-**System tested on:** Windows 11, AMD Ryzen 5 7500F (6 cores / 12 threads)
+### JavaScriptCore (Safari)
+
+| Environment | Platform | Error Rate | Status |
+|-------------|----------|-----------|--------|
+| Safari 18 | macOS Sequoia | **10.8%** | **Affected** — confirmed via BrowserStack |
+| Safari 17 | macOS Sonoma | **50.9%** | **Affected** — confirmed via BrowserStack |
+| Safari 26 | macOS Tahoe (Apple Silicon) | **26.1%** | **Affected** — confirmed via BrowserStack |
+| Safari iOS 18 (iPhone 16) | ARM (Apple A18) | **21.3%** | **Affected** — confirmed via BrowserStack |
+| Safari iOS 16 (iPhone 14) | ARM (Apple A15) | **21.1%** | **Affected** — confirmed via BrowserStack |
+
+### Analysis
+
+**All three major JavaScript engines are affected:** V8, SpiderMonkey, and JavaScriptCore. This is a **spec-level issue**, not an engine implementation bug.
+
+**V8 is progressively fixing it.** Error rates across V8 versions: 66% (V8 12.4) → 28% (V8 14.6, Windows BrowserStack) → 10.5% (V8 14.6, local Windows) → 0.0007% (Canary 148, Windows) → **0% (V8 14.6, macOS Tahoe)**. On the same macOS Tahoe BrowserStack host where V8 passes with 0 stale reads across 10 runs, SpiderMonkey fails at 10.3% and JSC fails at 26.1%. V8 has genuinely fixed the fence on at least some platforms.
+
+**SpiderMonkey and JavaScriptCore have no fix.** Both engines fail consistently across all tested platforms with no trend toward improvement.
+
+**ARM is the definitive proof.** On Android (MediaTek Dimensity 8300, ARM Cortex-A715/A510), V8 fails with just **2 workers** at 22.3% — a test that passes on every x86 system. x86's Total Store Order (TSO) hardware memory model was partially masking the bug. The `Atomics.wait` "not-equal" fast path is **missing a memory fence** that ARM requires and x86 provides implicitly. iOS Safari (ARM) also fails but only at the 3-worker level (21%).
+
+**Cross-browser testing powered by [BrowserStack](https://www.browserstack.com).** BrowserStack supports open source projects — thank you for making cross-browser verification possible.
+
+**Primary test system:** Windows 11, AMD Ryzen 5 7500F (6 cores / 12 threads)
 
 ### Chrome Results Detail (Escalating Test)
 
