@@ -1,0 +1,92 @@
+BUGZILLA FORM FIELDS:
+=====================
+Product: Core
+Component: JavaScript Engine
+Version: Trunk
+OS: All
+Hardware: All
+Severity: S3
+Summary: Atomics.wait "not-equal" return path missing memory fence — 63% stale reads with 3+ workers
+
+DESCRIPTION (copy below this line):
+====================================
+
+SUMMARY
+
+When Atomics.wait returns "not-equal" (because the watched value has already changed before the call), SpiderMonkey does not appear to emit a full sequential-consistency memory fence. This causes workers that take the "not-equal" fast path to read stale values from SharedArrayBuffer — values written by other workers before the barrier are invisible.
+
+The failure rate is ~63% of cross-worker reads, which matches the theoretical 2/3 expected when the fence is missing (3 workers, each reading 2 other workers' slots).
+
+This is not SpiderMonkey-specific. All three major JS engines are affected: V8 (Chromium), SpiderMonkey (Firefox), and JavaScriptCore (Safari). V8 has progressively fixed the fence in recent versions. Three independent engines failing identically suggests a spec-level ambiguity in the ECMAScript memory model.
+
+STEPS TO REPRODUCE
+
+1. Open https://lostbeard.github.io/v8-atomics-wait-bug/ in Firefox
+2. Click "Run All Tests"
+3. Observe Test 2 fails with stale reads
+
+Source: https://github.com/LostBeard/v8-atomics-wait-bug
+
+WHAT THE TEST DOES
+
+Three workers synchronize using a standard generation-counting barrier with Atomics.wait/Atomics.notify. Each iteration: workers write a unique value to their slot, enter the barrier, then read all other workers' slots and verify values match.
+
+Three tests isolate the bug:
+- Test 1 (2 workers, wait/notify): PASS — 0 stale reads
+- Test 2 (3 workers, wait/notify): FAIL — 63.2% stale reads at 1K iterations
+- Test 3 (3 workers, spin/Atomics.load): PASS — 0 stale reads
+
+EXPECTED BEHAVIOR
+
+After Atomics.wait returns — regardless of return value ("ok", "not-equal", "timed-out") — all prior stores from all agents that happened-before the event that caused the return should be visible.
+
+ACTUAL BEHAVIOR
+
+When Atomics.wait returns "not-equal", stores from other workers that preceded the generation bump are not visible. Workers read stale values. Error rate is ~63%, consistent with the missing fence affecting 2 out of 3 cross-worker read pairs.
+
+SPIDERMONKEY TEST RESULTS
+
+Firefox 148 / Windows 11 (AMD Ryzen 5 7500F, 6c/12t):
+- Test 1 (2W wait/notify): PASS — 0 / 200,000 stale reads (0%)
+- Test 2 (3W wait/notify): FAIL — 1,897 / 3,000 stale reads (63.2%)
+- Test 3 (3W spin): PASS — 0 / 9,000 stale reads (0%)
+
+Firefox 149 / macOS Tahoe (Apple Silicon, 10 cores, via BrowserStack):
+- Test 1 (2W wait/notify): PASS — 0 / 200,000 stale reads (0%)
+- Test 2 (3W wait/notify): FAIL — 4,004 / 39,000 stale reads (10.3%)
+- Test 3 (3W spin): PASS — 0 / 36,000 stale reads (0%)
+
+SpiderMonkey fails on both x86 (Windows) and ARM (macOS Apple Silicon). On the same macOS Tahoe BrowserStack host, V8 (Chrome/Edge 146) passes with 0 stale reads across 10 runs — confirming V8 has fixed the fence while SpiderMonkey has not.
+
+WORKAROUND
+
+Replacing Atomics.wait with a pure spin on Atomics.load fixes the issue:
+  while (Atomics.load(view, genIdx) === myGen) {}
+Every Atomics.load is seq_cst — when it observes the new generation, the total order guarantees all prior stores are visible.
+
+CROSS-ENGINE RESULTS
+
+All three major engines affected:
+- V8 12.4 (Node.js 22.14), x86-64 Windows: ~66%
+- V8 14.6 (Chrome 146), x86-64 Windows: 10.5%
+- V8 14.6 (Chrome 146), macOS Tahoe: 0% (fixed)
+- SpiderMonkey (Firefox 148), x86-64 Windows: 63.2%
+- SpiderMonkey (Firefox 149), macOS Tahoe: 10.3%
+- JSC (Safari 18), macOS Sequoia: 10.8%
+- JSC (Safari 17), macOS Sonoma: 50.9%
+- JSC (Safari 26), macOS Tahoe: 26.1%
+- Android Chrome (3 ARM SoCs): 14.5%-48.4% — fails 2-worker test on ARM
+
+SPEC REFERENCES
+
+- ECMAScript Section 25.4.12 (Atomics.wait): https://tc39.es/ecma262/#sec-atomics.wait
+- ECMAScript Section 29 (Memory Model): https://tc39.es/ecma262/#sec-memory-model
+- WebAssembly Threads (memory.atomic.wait32): https://webassembly.github.io/threads/core/exec/instructions.html
+
+RELATED BUGS
+
+- Chromium: https://issues.chromium.org/issues/495679735
+- Reproducer: https://github.com/LostBeard/v8-atomics-wait-bug
+- Live demo: https://lostbeard.github.io/v8-atomics-wait-bug/
+
+Cross-browser testing powered by BrowserStack (https://www.browserstack.com).

@@ -4,7 +4,7 @@
 >
 > **Bug Reports:**
 > - **Chromium:** https://issues.chromium.org/issues/495679735
-> - **Firefox (Bugzilla):** *Filing in progress*
+> - **Firefox (Bugzilla):** https://bugzilla.mozilla.org/show_bug.cgi?id=2029633
 > - **WebKit:** *Filing in progress*
 > - **TC39 (spec gap):** *Draft prepared*
 

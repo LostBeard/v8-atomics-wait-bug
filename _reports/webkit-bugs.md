@@ -141,7 +141,7 @@ Every `Atomics.load` is seq_cst. When the load observes the new generation, the 
 ### Related bugs
 
 - **Chromium:** https://issues.chromium.org/issues/495679735
-- **Firefox (Bugzilla):** *Filing concurrently*
+- **Firefox (Bugzilla):** https://bugzilla.mozilla.org/show_bug.cgi?id=2029633
 - **Reproducer:** https://github.com/LostBeard/v8-atomics-wait-bug
 - **Live demo:** https://lostbeard.github.io/v8-atomics-wait-bug/
 
