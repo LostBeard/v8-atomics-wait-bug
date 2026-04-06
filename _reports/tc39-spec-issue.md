@@ -53,7 +53,9 @@ All three major JavaScript engines are affected. Testing via BrowserStack confir
 | Chrome 146 (V8 14.6) | x86-64, Windows 11 | 10.5% | Escalating 1K-100K |
 | Edge 146 (V8 14.6) | x86-64, Windows 11 | 28.2% | BrowserStack |
 | Chrome Canary 148 | x86-64, Windows 11 | 0.0007% (1/135K) | Rare but confirmed |
-| Android Chrome (V8 latest) | ARM Cortex-A715/A510 | 22.3% (2 workers!) | ARM fails even with 2 workers |
+| Android Chrome (V8 latest) | ARM — MediaTek Dimensity 8300 | 22.3% (2 workers!) | ARM fails even with 2 workers |
+| Android Chrome (V8 latest) | ARM — Google Tensor G5 (Pixel Pro 10 XL) | 14.5% (2 workers!) | BrowserStack |
+| Android Chrome (V8 latest) | ARM — Snapdragon 8 Elite Gen 2 (Galaxy S26) | 48.4% (2 workers!) | BrowserStack |
 | Chrome 146 | macOS Tahoe (Apple Silicon) | **0%** (10 runs) | Appears fixed |
 | Edge 146 | macOS Tahoe (Apple Silicon) | **0%** (10 runs) | Appears fixed |
 
@@ -76,7 +78,15 @@ All three major JavaScript engines are affected. Testing via BrowserStack confir
 
 **V8 has progressively fixed the fence** — from 66% (V8 12.4) down to 0% on macOS Tahoe. On the same macOS Tahoe BrowserStack host where V8 passes, SpiderMonkey (10.3%) and JSC (26.1%) still fail. SpiderMonkey and JavaScriptCore show no improvement trend.
 
-**The ARM result is critical.** On Android (MediaTek Dimensity 8300, ARM Cortex-A715/A510), V8 fails with just **2 workers** at 22.3% — a test that passes on every x86 system. x86's Total Store Order (TSO) provides implicit store ordering that partially masks the missing fence. ARM's relaxed memory model exposes the bug completely.
+**Android ARM is the definitive proof.** Three different Android ARM SoCs all fail the **2-worker test** — a test that passes on every x86 and Apple Silicon system:
+
+| Device | SoC | 2-Worker Error Rate |
+|--------|-----|-------------------|
+| Samsung Galaxy S26 | Snapdragon 8 Elite Gen 2 | **48.4%** |
+| Lenovo IdeaTab | MediaTek Dimensity 8300 | **22.3%** |
+| Google Pixel Pro 10 XL | Google Tensor G5 | **14.5%** |
+
+x86's TSO provides implicit store ordering that masks the missing fence at the 2-worker level. ARM's relaxed memory model exposes the bug completely. Notably, Apple Silicon ARM (iOS Safari) does **not** fail the 2-worker test — Apple's ARM implementation may provide stronger ordering.
 
 ### Spec analysis
 

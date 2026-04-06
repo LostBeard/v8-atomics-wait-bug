@@ -129,3 +129,39 @@ TEST	WORKERS	BARRIER	STALE READS	ERROR RATE	RESULT
 3W wait/notify	3	wait/notify	0 / 1,143,000	0.0%	PASS
 3W spin	3	spin	0 / 900,000	0.0%	PASS
 ```
+
+## 11. Opera 129 (Chrome 145) / Windows 11
+
+```
+Environment: V8 (Chrome 145) | COI: Yes | Cores: 4
+
+TEST	WORKERS	BARRIER	STALE READS	ERROR RATE	RESULT
+2W wait-notify	2	wait/notify	0 / 200,000	0.0%	PASS
+3W wait/notify	3	wait/notify	10,206 / 87,000	11.7%	FAIL
+3W spin	3	spin	0 / 72,000	0.0%	PASS
+```
+
+## 12. Chrome / Android Google Pixel Pro 10 XL 
+
+```
+TEST	WORKERS	BARRIER	STALE READS	ERROR RATE	RESULT
+2W wait-notify	2	wait/notify	14,501 / 100,000	14.5%	FAIL
+3W wait/notify	3	wait/notify	21,712 / 231,000	9.4%	FAIL
+3W spin	3	spin	0 / 144,000	0.0%	PASS
+```
+
+## 13. Chrome / Android Samsung Galaxy S26
+
+```
+TEST	WORKERS	BARRIER	STALE READS	ERROR RATE	RESULT
+2W wait-notify	2	wait/notify	48,409 / 100,000	48.4%	FAIL
+3W wait/notify	3	wait/notify	2,849 / 39,000	7.3%	FAIL
+3W spin	3	spin	0 / 36,000	0.0%	PASS
+
+```
+
+## 14. Chrome / Android Huawei P30
+
+```
+> Huawei P30 - 9 is currently unavailable due to heavy traffic. Please try again later.
+```

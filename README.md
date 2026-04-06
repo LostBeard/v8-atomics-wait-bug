@@ -130,9 +130,12 @@ Three tests isolate the bug precisely:
 | Chrome 146 (V8 ~14.6) | x86-64, Windows 11 | **10.5%** | **Affected** — confirmed |
 | Edge 146 (V8 ~14.6) | x86-64, Windows 11 | **28.2%** | **Affected** — confirmed via BrowserStack |
 | Chrome Canary 148 (V8 latest) | x86-64, Windows 11 | **0.0007%** (1/135K) | **Affected** — rare but confirmed |
-| Android Chrome (V8 latest) | ARM Cortex-A715/A510 | **22.3% (2 workers!)** | **Affected** — ARM fails even with 2 workers |
+| Android Chrome (V8 latest) | ARM — MediaTek Dimensity 8300 | **22.3% (2 workers!)** | **Affected** — ARM fails even with 2 workers |
+| Android Chrome (V8 latest) | ARM — Google Tensor G5 (Pixel Pro 10 XL) | **14.5% (2 workers!)** | **Affected** — via BrowserStack |
+| Android Chrome (V8 latest) | ARM — Snapdragon 8 Elite Gen 2 (Galaxy S26) | **48.4% (2 workers!)** | **Affected** — via BrowserStack |
 | Chrome 146 | macOS Tahoe (Apple Silicon) | **0%** (10 runs) | **Not reproduced** — V8 appears fixed here |
 | Edge 146 | macOS Tahoe (Apple Silicon) | **0%** (10 runs) | **Not reproduced** — V8 appears fixed here |
+| Opera 129 (Chrome 145) | x86-64, Windows 11 | **11.7%** | **Affected** — via BrowserStack |
 | Opera (Chrome 145) | macOS Tahoe (Apple Silicon) | **0%** | **Not reproduced** — V8 appears fixed here |
 
 ### SpiderMonkey (Firefox)
@@ -160,7 +163,15 @@ Three tests isolate the bug precisely:
 
 **SpiderMonkey and JavaScriptCore have no fix.** Both engines fail consistently across all tested platforms with no trend toward improvement.
 
-**ARM is the definitive proof.** On Android (MediaTek Dimensity 8300, ARM Cortex-A715/A510), V8 fails with just **2 workers** at 22.3% — a test that passes on every x86 system. x86's Total Store Order (TSO) hardware memory model was partially masking the bug. The `Atomics.wait` "not-equal" fast path is **missing a memory fence** that ARM requires and x86 provides implicitly. iOS Safari (ARM) also fails but only at the 3-worker level (21%).
+**Android ARM is the definitive proof.** Three different Android ARM SoCs all fail the **2-worker test** — a test that passes on every x86 and Apple Silicon system:
+
+| Device | SoC | 2-Worker Error Rate |
+|--------|-----|-------------------|
+| Samsung Galaxy S26 | Snapdragon 8 Elite Gen 2 | **48.4%** |
+| Lenovo IdeaTab | MediaTek Dimensity 8300 | **22.3%** |
+| Google Pixel Pro 10 XL | Google Tensor G5 | **14.5%** |
+
+x86's Total Store Order (TSO) masks the bug at the 2-worker level. ARM's relaxed memory model exposes the missing fence completely. Notably, **Apple Silicon ARM does not fail the 2-worker test** (iOS Safari at 0% for 2W) — Apple's ARM implementation may provide stronger ordering guarantees than standard ARM, or iOS JSC avoids the specific race window.
 
 **Cross-browser testing powered by [BrowserStack](https://www.browserstack.com).** BrowserStack supports open source projects — thank you for making cross-browser verification possible.
 
