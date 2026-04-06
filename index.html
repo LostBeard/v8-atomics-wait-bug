@@ -306,6 +306,7 @@ function barrierSpin(view, arrivalIdx, genIdx, workerCount) {
             </thead>
             <tbody id="results-tbody"></tbody>
         </table>
+        <button id="copy-results-btn" style="margin-top:0.75rem;padding:0.5rem 1rem;background:var(--accent);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.9rem" onclick="copyResults()">Copy Results</button>
         <div id="results-interpretation" style="margin-top:1rem;color:var(--text-secondary)"></div>
     </section>
 
@@ -350,6 +351,32 @@ npx serve -p 8080
 </div>
 
 <script src="coi-serviceworker.js"></script>
+<script>
+function copyResults() {
+    var rows = document.querySelectorAll('#results-tbody tr');
+    var engine = document.getElementById('env-engine').textContent;
+    var coi = document.getElementById('env-coi').textContent;
+    var cores = document.getElementById('env-cores').textContent;
+    var lines = [];
+    lines.push('Environment: ' + engine + ' | COI: ' + coi + ' | Cores: ' + cores);
+    lines.push('');
+    lines.push('TEST\tWORKERS\tBARRIER\tSTALE READS\tERROR RATE\tRESULT');
+    for (var i = 0; i < rows.length; i++) {
+        var cells = rows[i].querySelectorAll('td');
+        var vals = [];
+        for (var j = 0; j < cells.length; j++) vals.push(cells[j].textContent);
+        lines.push(vals.join('\t'));
+    }
+    var text = lines.join('\n');
+    navigator.clipboard.writeText(text).then(function () {
+        var btn = document.getElementById('copy-results-btn');
+        btn.textContent = 'Copied!';
+        setTimeout(function () { btn.textContent = 'Copy Results'; }, 2000);
+    }).catch(function () {
+        prompt('Copy this:', text);
+    });
+}
+</script>
 <script>
 (function () {
     'use strict';
