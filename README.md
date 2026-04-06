@@ -173,9 +173,7 @@ Three tests isolate the bug precisely:
 
 x86's Total Store Order (TSO) masks the bug at the 2-worker level. ARM's relaxed memory model exposes the missing fence completely. Notably, **Apple Silicon ARM does not fail the 2-worker test** (iOS Safari at 0% for 2W) — Apple's ARM implementation may provide stronger ordering guarantees than standard ARM, or iOS JSC avoids the specific race window.
 
-**Cross-browser testing powered by [BrowserStack](https://www.browserstack.com).** BrowserStack supports open source projects — thank you for making cross-browser verification possible.
-
-**Primary test system:** Windows 11, AMD Ryzen 5 7500F (6 cores / 12 threads)
+**Primary test system:** Windows 11, AMD Ryzen 5 7500F (6 cores / 12 threads). Cross-browser testing via [BrowserStack](#acknowledgments).
 
 ### Chrome Results Detail (Escalating Test)
 
@@ -216,6 +214,14 @@ V8Bug/
 ├── LICENSE                   # MIT
 └── README.md                 # This file
 ```
+
+## Acknowledgments
+
+Cross-browser testing for this project is powered by BrowserStack.
+
+[![BrowserStack](https://www.browserstack.com/images/layout/browserstack-logo-600x315.png)](https://www.browserstack.com)
+
+[BrowserStack](https://www.browserstack.com) provides free access to their cross-browser testing platform for open-source projects. Without BrowserStack, confirming this bug across Safari (macOS + iOS), Edge, Opera, Firefox on macOS, and three different Android ARM devices would not have been possible. Their support for the open-source community is invaluable — thank you.
 
 ## License
 
