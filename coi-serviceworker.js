@@ -10,18 +10,26 @@ if (typeof window !== 'undefined') {
     // --- Page context ---
     if (window.crossOriginIsolated) {
         // Already isolated, nothing to do
+        console.log('[COI] Already cross-origin isolated');
     } else if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register(window.document.currentScript.src)
-            .then(function (reg) {
-                console.log('[COI] Service worker registered, scope:', reg.scope);
-                // Reload once active so the SW can inject headers
-                navigator.serviceWorker.ready.then(function () {
-                    window.location.reload();
+        // Guard against infinite reload loop: only reload once per session
+        var reloadKey = 'coi-sw-reloaded';
+        if (sessionStorage.getItem(reloadKey)) {
+            console.warn('[COI] Service worker active but crossOriginIsolated is still false — browser may not support COOP/COEP. Proceeding without isolation.');
+        } else {
+            navigator.serviceWorker.register(window.document.currentScript.src)
+                .then(function (reg) {
+                    console.log('[COI] Service worker registered, scope:', reg.scope);
+                    // Reload once active so the SW can inject headers
+                    navigator.serviceWorker.ready.then(function () {
+                        sessionStorage.setItem(reloadKey, '1');
+                        window.location.reload();
+                    });
+                })
+                .catch(function (err) {
+                    console.error('[COI] Service worker registration failed:', err);
                 });
-            })
-            .catch(function (err) {
-                console.error('[COI] Service worker registration failed:', err);
-            });
+        }
     }
 } else {
     // --- Service Worker context ---
