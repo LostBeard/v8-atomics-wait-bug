@@ -1,0 +1,131 @@
+TC39 GITHUB ISSUE:
+==================
+URL: https://github.com/tc39/ecma262/issues/new
+Title: `Atomics.wait` "not-equal" return path lacks happens-before ordering guarantee — three independent engines affected
+
+BODY (copy everything below this line — GitHub supports markdown):
+==================================================================
+
+### Summary
+
+When `Atomics.wait(typedArray, index, value)` returns `"not-equal"` because the value at `index` has already changed, the memory model does not clearly establish a happens-before edge from the stores that preceded the value change. **All three major JavaScript engines** (V8, SpiderMonkey, JavaScriptCore) exhibit identical behavior: **~10-66% of cross-worker reads are stale** after a barrier that relies on `Atomics.wait` / `Atomics.notify` with 3+ workers.
+
+Three completely independent engine implementations producing the same failure confirms this is a **spec ambiguity**, not an engine implementation bug.
+
+Bug reports filed with all three engines:
+- **Chromium (V8):** https://issues.chromium.org/issues/495679735
+- **Firefox (SpiderMonkey):** https://bugzilla.mozilla.org/show_bug.cgi?id=2029633
+- **WebKit (JSC):** https://bugs.webkit.org/show_bug.cgi?id=311568
+
+### The problem
+
+A standard generation-counting barrier using `Atomics.wait` / `Atomics.notify`:
+
+```javascript
+function barrier(view, arrivalIdx, genIdx, workerCount) {
+    const myGen = Atomics.load(view, genIdx);
+    const arrived = Atomics.add(view, arrivalIdx, 1) + 1;
+    if (arrived === workerCount) {
+        // Last arriver: reset counter, bump generation, wake waiters
+        Atomics.store(view, arrivalIdx, 0);
+        Atomics.store(view, genIdx, myGen + 1);
+        Atomics.notify(view, genIdx, workerCount - 1);
+    } else {
+        // Wait for generation to change
+        Atomics.wait(view, genIdx, myGen);
+    }
+}
+```
+
+With 3 workers, there is a race: a non-last worker may call `Atomics.wait` *after* the last worker has already bumped the generation. In this case, `Atomics.wait` returns `"not-equal"` immediately. The worker proceeds past the barrier — but **does not see stores from other workers** that preceded the generation bump.
+
+Replacing `Atomics.wait` with `while (Atomics.load(view, genIdx) === myGen) {}` fixes the issue completely, because every `Atomics.load` is seq_cst and the total order guarantees visibility.
+
+### Evidence across engines and architectures
+
+**V8 (Chrome / Edge / Node.js):**
+
+| Environment | Platform | Error Rate | Notes |
+|-------------|----------|-----------|-------|
+| Node.js 22.14 (V8 12.4) | x86-64, Windows 11 | ~66% | 50K iterations |
+| Chrome 146 (V8 14.6) | x86-64, Windows 11 | 10.5% | Escalating 1K-100K |
+| Edge 146 (V8 14.6) | x86-64, Windows 11 | 28.2% | BrowserStack |
+| Chrome Canary 148 | x86-64, Windows 11 | 0.0007% (1/135K) | Rare but confirmed |
+| Android Chrome | ARM — Snapdragon 8 Elite Gen 2 (Galaxy S26) | 48.4% (2 workers!) | BrowserStack |
+| Android Chrome | ARM — MediaTek Dimensity 8300 | 22.3% (2 workers!) | BrowserStack |
+| Android Chrome | ARM — Google Tensor G5 (Pixel Pro 10 XL) | 14.5% (2 workers!) | BrowserStack |
+| Chrome 146 | macOS Tahoe (Apple Silicon) | **0%** (10 runs) | Appears fixed |
+| Edge 146 | macOS Tahoe (Apple Silicon) | **0%** (10 runs) | Appears fixed |
+
+**SpiderMonkey (Firefox):**
+
+| Environment | Platform | Error Rate | Notes |
+|-------------|----------|-----------|-------|
+| Firefox 148 | x86-64, Windows 11 | 63.2% | Fails at 1K iterations |
+| Firefox 149 | macOS Tahoe (Apple Silicon) | 10.3% | BrowserStack |
+
+**JavaScriptCore (Safari):**
+
+| Environment | Platform | Error Rate | Notes |
+|-------------|----------|-----------|-------|
+| Safari 18 | macOS Sequoia | 10.8% | BrowserStack |
+| Safari 17 | macOS Sonoma | 50.9% | BrowserStack |
+| Safari 26 | macOS Tahoe | 26.1% | BrowserStack |
+| Safari iOS 18 (iPhone 16) | ARM (Apple A18) | 21.3% | BrowserStack |
+| Safari iOS 16 (iPhone 14) | ARM (Apple A15) | 21.1% | BrowserStack |
+
+V8 has progressively fixed the fence — from 66% down to 0% on macOS Tahoe. On the **same macOS Tahoe BrowserStack host** where V8 passes with 0 stale reads, SpiderMonkey (10.3%) and JSC (26.1%) still fail. SpiderMonkey and JavaScriptCore show no improvement trend.
+
+**Android ARM is the definitive proof.** Three different SoCs fail the **2-worker test** — a test that passes on every x86 and Apple Silicon system:
+
+| Device | SoC | 2-Worker Error Rate |
+|--------|-----|-------------------|
+| Samsung Galaxy S26 | Snapdragon 8 Elite Gen 2 | **48.4%** |
+| Lenovo IdeaTab | MediaTek Dimensity 8300 | **22.3%** |
+| Google Pixel Pro 10 XL | Google Tensor G5 | **14.5%** |
+
+x86's TSO provides implicit store ordering that masks the missing fence at the 2-worker level. ARM's relaxed memory model exposes the bug completely. Notably, Apple Silicon ARM (iOS Safari) does **not** fail the 2-worker test — Apple's ARM implementation may provide stronger ordering.
+
+### Spec analysis
+
+**Section 25.4.12 (Atomics.wait):**
+The algorithm enters the WaiterList critical section, performs an atomic read to compare values, and if they differ, returns `"not-equal"` after exiting the critical section. The critical section entry/exit provides mutual exclusion with `Atomics.notify`, but the spec does not explicitly state that the "not-equal" path establishes a Synchronize relationship with the agent that performed the store observed by the comparison.
+
+**Section 29 (Memory Model):**
+The Synchronize relationship between `Atomics.notify` and agents it wakes is well-defined (29.10, 29.11). However, an agent whose `Atomics.wait` returns `"not-equal"` was never added to the WaiterList and was never woken by `Atomics.notify`. The synchronization edge flows through the wake path — but the "not-equal" path bypasses this entirely.
+
+**The gap:** The "not-equal" return implies the agent *observed* a value written by another agent (the generation was bumped). Intuitively, this observation should carry a happens-before edge from all prior stores by the writing agent. But the spec's synchronization model is defined in terms of WaiterList operations and `Atomics.notify` wake events — neither of which occurs on the "not-equal" path.
+
+### Comparison with WebAssembly
+
+The WebAssembly threads spec for `memory.atomic.wait32` explicitly requires an ARD<sub>SEQCST</sub> (atomic read with sequential consistency) as its first step. If implemented correctly, the seq_cst read should provide ordering regardless of the return value. Despite this, the bug manifests in Wasm contexts as well (discovered while implementing multi-worker Wasm kernel dispatch in [SpawnDev.ILGPU](https://github.com/LostBeard/SpawnDev.ILGPU)).
+
+### Proposed clarification
+
+The spec should explicitly state that when `Atomics.wait` returns `"not-equal"`, the atomic comparison that detected the value mismatch establishes a Synchronize relationship equivalent to a seq_cst load. Specifically:
+
+> When `Atomics.wait` returns `"not-equal"`, the comparison read Synchronizes-with the most recent `Atomics.store` or `Atomics.compareExchange` that wrote the observed value. All stores that happened-before that write are guaranteed to be visible to the agent after `Atomics.wait` returns.
+
+This would align the ECMAScript spec with:
+1. The WebAssembly threads spec (which already requires ARD<sub>SEQCST</sub>)
+2. Developer expectations (observing a value change implies seeing all prior stores)
+3. The behavior of `Atomics.load` (which is unambiguously seq_cst)
+
+### Workaround
+
+Replace `Atomics.wait` with a spin loop on `Atomics.load`:
+```javascript
+while (Atomics.load(view, genIdx) === myGen) {}
+```
+This works because `Atomics.load` is unambiguously seq_cst.
+
+### Reproducer
+
+- **GitHub repo:** https://github.com/LostBeard/v8-atomics-wait-bug
+- **Live demo:** https://lostbeard.github.io/v8-atomics-wait-bug/
+
+### Discovery context
+
+This was discovered by the [SpawnDev.ILGPU](https://github.com/LostBeard/SpawnDev.ILGPU) team while implementing multi-worker WebAssembly kernel dispatch. The workaround (spin barriers using `i32.atomic.load`) shipped in v4.6.0 with 0 test failures across 249 Wasm backend tests.
+
+Cross-browser testing powered by [BrowserStack](https://www.browserstack.com).
