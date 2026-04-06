@@ -449,10 +449,10 @@ function copyResults() {
 
     async function runAll() {
         if (running) return;
+        resetAll();
         running = true;
         btnRunAll.disabled = true;
         btnReset.disabled = true;
-        document.getElementById('results-section').style.display = 'none';
 
         // Step 1: Test 1 — 2 workers, wait/notify (control, fixed at 50K)
         statusEl.textContent = 'Running control test (2 workers)...';
@@ -503,6 +503,7 @@ function copyResults() {
         statusEl.textContent = '';
         showSummary();
         running = false;
+        btnRunAll.disabled = false;
         btnReset.disabled = false;
     }
 
