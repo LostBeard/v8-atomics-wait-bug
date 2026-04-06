@@ -1,0 +1,111 @@
+WEBKIT BUGS FORM FIELDS:
+========================
+URL: https://bugs.webkit.org/enter_bug.cgi
+Product: WebKit
+Component: JavaScriptCore
+Version: WebKit Nightly Build (or Safari 18 if available)
+OS: All
+Hardware: All
+Severity: Normal
+Summary: Atomics.wait "not-equal" return path missing memory fence — stale reads with 3+ workers
+
+DESCRIPTION (copy below this line):
+====================================
+
+SUMMARY
+
+When Atomics.wait returns "not-equal" (because the watched value has already changed before the call), JavaScriptCore does not emit a full sequential-consistency memory fence. Workers that take the "not-equal" fast path read stale values from SharedArrayBuffer — values written by other workers before the barrier are invisible.
+
+This is not JSC-specific. All three major JavaScript engines are affected: V8 (Chromium), SpiderMonkey (Firefox), and JavaScriptCore (Safari). Three independent engines failing identically confirms this is a spec-level ambiguity in the ECMAScript memory model. V8 has progressively fixed the fence in recent versions; SpiderMonkey and JavaScriptCore have not.
+
+STEPS TO REPRODUCE
+
+1. Open https://lostbeard.github.io/v8-atomics-wait-bug/ in Safari
+2. Click "Run All Tests"
+3. Observe Test 2 fails with stale reads
+
+Source: https://github.com/LostBeard/v8-atomics-wait-bug
+
+WHAT THE TEST DOES
+
+Three workers synchronize using a standard generation-counting barrier with Atomics.wait/Atomics.notify. Each iteration: workers write a unique value to their slot, enter the barrier, then read all other workers' slots and verify values match.
+
+Three tests isolate the bug:
+- Test 1 (2 workers, wait/notify): PASS — 0 stale reads
+- Test 2 (3 workers, wait/notify): FAIL — stale reads detected
+- Test 3 (3 workers, spin/Atomics.load): PASS — 0 stale reads
+
+EXPECTED BEHAVIOR
+
+After Atomics.wait returns — regardless of return value ("ok", "not-equal", "timed-out") — all prior stores from all agents that happened-before the event that caused the return should be visible.
+
+ACTUAL BEHAVIOR
+
+When Atomics.wait returns "not-equal", stores from other workers that preceded the generation bump are not visible. Workers read stale values.
+
+JAVASCRIPTCORE TEST RESULTS (all via BrowserStack)
+
+Safari 18 / macOS Sequoia:
+- Test 1 (2W wait/notify): PASS — 0 / 200,000 stale reads (0%)
+- Test 2 (3W wait/notify): FAIL — 1,625 / 15,000 stale reads (10.8%)
+- Test 3 (3W spin): PASS — 0 / 18,000 stale reads (0%)
+
+Safari 17 / macOS Sonoma:
+- Test 1 (2W wait/notify): PASS — 0 / 200,000 stale reads (0%)
+- Test 2 (3W wait/notify): FAIL — 1,526 / 3,000 stale reads (50.9%)
+- Test 3 (3W spin): PASS — 0 / 9,000 stale reads (0%)
+
+Safari 26 / macOS Tahoe:
+- Test 1 (2W wait/notify): PASS — 0 / 200,000 stale reads (0%)
+- Test 2 (3W wait/notify): FAIL — 784 / 3,000 stale reads (26.1%)
+- Test 3 (3W spin): PASS — 0 / 9,000 stale reads (0%)
+
+Safari iOS 18 / iPhone 16 (ARM):
+- Test 1 (2W wait/notify): PASS — 0 / 200,000 stale reads (0%)
+- Test 2 (3W wait/notify): FAIL — 638 / 3,000 stale reads (21.3%)
+- Test 3 (3W spin): PASS — 0 / 9,000 stale reads (0%)
+
+Safari iOS 16 / iPhone 14 (ARM):
+- Test 1 (2W wait/notify): PASS — 0 / 200,000 stale reads (0%)
+- Test 2 (3W wait/notify): FAIL — 634 / 3,000 stale reads (21.1%)
+- Test 3 (3W spin): PASS — 0 / 9,000 stale reads (0%)
+
+JSC fails consistently across all tested platforms — macOS Sequoia, Sonoma, Tahoe, iOS 18, iOS 16. Error rates range from 10.8% to 50.9% with no improvement trend across JSC versions.
+
+On the same macOS Tahoe BrowserStack host, V8 (Chrome/Edge 146) passes with 0 stale reads across 10 runs, while JSC (Safari 26) fails at 26.1% — proving this is engine-specific, not hardware-related.
+
+WORKAROUND
+
+Replacing Atomics.wait with a pure spin on Atomics.load fixes the issue:
+  while (Atomics.load(view, genIdx) === myGen) {}
+Every Atomics.load is seq_cst — when it observes the new generation, the total order guarantees all prior stores are visible.
+
+CROSS-ENGINE RESULTS
+
+All three major engines affected:
+- V8 12.4 (Node.js 22.14), x86-64 Windows: ~66%
+- V8 14.6 (Chrome 146), x86-64 Windows: 10.5%
+- V8 14.6 (Chrome 146), macOS Tahoe: 0% (fixed)
+- SpiderMonkey (Firefox 148), x86-64 Windows: 63.2%
+- SpiderMonkey (Firefox 149), macOS Tahoe: 10.3%
+- JSC (Safari 18), macOS Sequoia: 10.8%
+- JSC (Safari 17), macOS Sonoma: 50.9%
+- JSC (Safari 26), macOS Tahoe: 26.1%
+- JSC (Safari iOS 18), ARM iPhone 16: 21.3%
+- JSC (Safari iOS 16), ARM iPhone 14: 21.1%
+- Android Chrome (3 ARM SoCs): 14.5%-48.4% — fails 2-worker test on ARM
+
+SPEC REFERENCES
+
+- ECMAScript Section 25.4.12 (Atomics.wait): https://tc39.es/ecma262/#sec-atomics.wait
+- ECMAScript Section 29 (Memory Model): https://tc39.es/ecma262/#sec-memory-model
+- WebAssembly Threads (memory.atomic.wait32): https://webassembly.github.io/threads/core/exec/instructions.html
+
+RELATED BUGS
+
+- Chromium: https://issues.chromium.org/issues/495679735
+- Firefox: https://bugzilla.mozilla.org/show_bug.cgi?id=2029633
+- Reproducer: https://github.com/LostBeard/v8-atomics-wait-bug
+- Live demo: https://lostbeard.github.io/v8-atomics-wait-bug/
+
+Cross-browser testing powered by BrowserStack (https://www.browserstack.com).

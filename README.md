@@ -5,7 +5,7 @@
 > **Bug Reports:**
 > - **Chromium:** https://issues.chromium.org/issues/495679735
 > - **Firefox (Bugzilla):** https://bugzilla.mozilla.org/show_bug.cgi?id=2029633
-> - **WebKit:** *Filing in progress*
+> - **WebKit:** https://bugs.webkit.org/show_bug.cgi?id=311568
 > - **TC39 (spec gap):** *Draft prepared*
 
 This repository contains a minimal, runnable demonstration of a **cross-engine** memory ordering bug where the `Atomics.wait` / `memory.atomic.wait32` "not-equal" fast path fails to establish happens-before relationships, causing stale reads of shared memory. **Three independent JavaScript engines are affected: V8, SpiderMonkey, and JavaScriptCore.**
