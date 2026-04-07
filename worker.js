@@ -72,7 +72,7 @@ self.onmessage = function (e) {
         }
     }
 
-    const barrier = mode === 'spin' ? barrierSpin : mode === 'wait-notify-loop' ? barrierWaitNotifyLoop : barrierWaitNotify;
+    const barrier = mode === 'spin' ? barrierSpin : mode === 'wait-notify-loop' ? barrierWaitNotifyLoop : mode === 'wait-notify-noloop' ? barrierWaitNotify : barrierWaitNotifyLoop;
 
     // --- Test loop ---
 
