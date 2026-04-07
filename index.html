@@ -621,7 +621,7 @@ function copyResults() {
                 results[testId] = {
                     label: workerCount + 'W ' + mode,
                     workerCount: workerCount,
-                    mode: mode === 'wait-notify' ? 'wait/notify' : 'spin',
+                    mode: mode === 'wait-notify' ? 'wait/notify' : mode === 'wait-notify-loop' ? 'wait/notify (loop)' : 'spin',
                     stale: totalErrors,
                     totalReads: totalChecks,
                     rate: rateStr,
