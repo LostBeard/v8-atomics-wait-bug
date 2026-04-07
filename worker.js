@@ -39,6 +39,24 @@ self.onmessage = function (e) {
         }
     }
 
+    function barrierWaitNotifyLoop() {
+        const gen = Atomics.load(v, GEN);
+        const arr = Atomics.add(v, ARR, 1) + 1;
+        if (arr === workerCount) {
+            Atomics.store(v, ARR, 0);
+            Atomics.store(v, GEN, gen + 1);
+            Atomics.notify(v, GEN, workerCount - 1);
+        } else {
+            // Wait in a loop - standard spurious wakeup defense.
+            // Re-checks GEN after each wake to handle cross-barrier
+            // notify wakeups (a notify from barrier N can wake a
+            // waiter that has already advanced to barrier N+1).
+            while (Atomics.load(v, GEN) === gen) {
+                Atomics.wait(v, GEN, gen);
+            }
+        }
+    }
+
     function barrierSpin() {
         const gen = Atomics.load(v, GEN);
         const arr = Atomics.add(v, ARR, 1) + 1;
@@ -47,14 +65,14 @@ self.onmessage = function (e) {
             Atomics.store(v, GEN, gen + 1);
         } else {
             while (Atomics.load(v, GEN) === gen) {
-                // Pure spin — seq_cst atomic load on every iteration.
+                // Pure spin - seq_cst atomic load on every iteration.
                 // When we observe the new generation, ALL prior stores
                 // from ALL threads are guaranteed visible.
             }
         }
     }
 
-    const barrier = mode === 'spin' ? barrierSpin : barrierWaitNotify;
+    const barrier = mode === 'spin' ? barrierSpin : mode === 'wait-notify-loop' ? barrierWaitNotifyLoop : barrierWaitNotify;
 
     // --- Test loop ---
 

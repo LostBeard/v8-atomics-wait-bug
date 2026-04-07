@@ -292,6 +292,41 @@ function barrierSpin(view, arrivalIdx, genIdx, workerCount) {
                 <span class="test-badge badge-pending" id="badge-test3">PENDING</span>
             </div>
         </div>
+
+        <!-- Test 4: 3 workers + wait/notify with loop (correct barrier) -->
+        <div class="test-card" id="card-test4">
+            <div class="test-header">
+                <div>
+                    <div class="test-title">Test 4: 3 Workers + Wait/Notify (with loop)</div>
+                    <div class="test-config">Correct barrier &mdash; wait in a loop handles spurious wakeups</div>
+                </div>
+                <span class="test-badge badge-expected-pass">Expected: PASS</span>
+            </div>
+            <div class="progress-wrap">
+                <div class="progress-bar"><div class="progress-fill ok" id="prog-test4"></div></div>
+            </div>
+            <div class="stats">
+                <div class="stat">
+                    <span class="stat-label">Iterations</span>
+                    <span class="stat-value" id="stat-test4-iter">-</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Cross-Worker Reads</span>
+                    <span class="stat-value" id="stat-test4-reads">-</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Stale Reads</span>
+                    <span class="stat-value" id="stat-test4-stale">-</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Error Rate</span>
+                    <span class="stat-value" id="stat-test4-rate">-</span>
+                </div>
+            </div>
+            <div style="margin-top:0.5rem">
+                <span class="test-badge badge-pending" id="badge-test4">PENDING</span>
+            </div>
+        </div>
     </section>
 
     <!-- Results Summary (shown after all tests) -->
@@ -500,6 +535,10 @@ function copyResults() {
         statusEl.textContent = 'Running spin barrier test at ' + spinIters.toLocaleString() + ' iterations...';
         await runTest('test3', 3, 'spin', spinIters);
 
+        // Step 4: Test 4 — 3 workers, wait/notify WITH loop — correct barrier
+        statusEl.textContent = 'Running wait/notify with loop at ' + spinIters.toLocaleString() + ' iterations...';
+        await runTest('test4', 3, 'wait-notify-loop', spinIters);
+
         statusEl.textContent = '';
         showSummary();
         running = false;
@@ -508,7 +547,7 @@ function copyResults() {
     }
 
     function resetAll() {
-        var ids = ['test1', 'test2', 'test3'];
+        var ids = ['test1', 'test2', 'test3', 'test4'];
         for (var i = 0; i < ids.length; i++) {
             var id = ids[i];
             document.getElementById('card-' + id).className = 'test-card';
@@ -650,7 +689,7 @@ function copyResults() {
 
         tbody.innerHTML = '';
 
-        var ids = ['test1', 'test2', 'test3'];
+        var ids = ['test1', 'test2', 'test3', 'test4'];
         for (var i = 0; i < ids.length; i++) {
             var r = results[ids[i]];
             if (!r) continue;
@@ -669,6 +708,7 @@ function copyResults() {
         var t1 = results.test1;
         var t2 = results.test2;
         var t3 = results.test3;
+        var t4 = results.test4;
 
         var html = '';
         if (t2 && !t2.passed && t1 && t1.passed && t3 && t3.passed) {
